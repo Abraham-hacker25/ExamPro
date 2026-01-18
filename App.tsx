@@ -22,54 +22,56 @@ const App: React.FC = () => {
   const [showNotification, setShowNotification] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
 
+  // Memoized sync function to prevent unnecessary re-renders
   const sync = useCallback(async (isBackground = false) => {
     try {
+      const [s, e, n] = await Promise.all([
+        cloudService.getSubjects(),
+        cloudService.getExams(),
+        cloudService.getNotes()
+      ]);
+      
+      setSubjects(s);
+      setExams(e);
+      setManualNotes(n);
+      
       if (user) {
         const cloudUser = await cloudService.getUser(user.email);
         if (cloudUser) {
-           // Detect change in premium status for immediate UI feedback
-           if (cloudUser.isPremium !== user.isPremium && cloudUser.isPremium) {
-             setShowNotification("Account Upgraded to Premium! 🚀");
-           }
-           
+           // Only update state if data has actually changed to prevent UI loops
            if (JSON.stringify(cloudUser) !== JSON.stringify(user)) {
              setUser(cloudUser);
            }
         }
       }
-
-      // Only fetch content if not already loaded or on dashboard refresh
-      if (!isBackground || activeTab === 'dashboard') {
-        const [s, e, n] = await Promise.all([
-          cloudService.getSubjects(),
-          cloudService.getExams(),
-          cloudService.getNotes()
-        ]);
-        setSubjects(s);
-        setExams(e);
-        setManualNotes(n);
-      }
     } catch (error) {
-      console.error("Sync error:", error);
+      console.error("Sync failed:", error);
     } finally {
-      setInitialLoading(false);
+      if (!isBackground) setInitialLoading(false);
     }
-  }, [user, activeTab]);
+  }, [user]);
 
+  // Initial load and navigation-based sync
   useEffect(() => {
     sync();
-  }, [activeTab]);
+  }, [activeTab, sync]);
 
-  // Real-time heartbeat (Every 8 seconds)
+  // REAL-TIME POLLING: Sync with Back4App every 15 seconds
   useEffect(() => {
     if (!user) return;
-    const interval = setInterval(() => sync(true), 8000);
+    
+    const interval = setInterval(() => {
+      sync(true); // Run in background mode
+    }, 15000);
+
     return () => clearInterval(interval);
   }, [user, sync]);
 
   useEffect(() => {
     if (user) {
       localStorage.setItem('exampro_session', JSON.stringify(user));
+      // Ensure local state changes are pushed to cloud
+      cloudService.saveUser(user);
     } else {
       localStorage.removeItem('exampro_session');
     }
@@ -83,13 +85,11 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     setUser(null);
-    localStorage.removeItem('exampro_session');
     setActiveTab('dashboard');
   };
 
-  const handleUpdateUser = async (updatedUser: User) => {
+  const handleUpdateUser = (updatedUser: User) => {
     setUser(updatedUser);
-    await cloudService.saveUser(updatedUser);
   };
 
   if (!user) return <Auth onLogin={handleLogin} />;
@@ -104,8 +104,9 @@ const App: React.FC = () => {
       case 'chat': return <AIChat />;
       case 'profile': return <Profile user={user} onUpdateUser={handleUpdateUser} onLogout={handleLogout} />;
       case 'premium': return <PaymentFlow user={user} onSuccess={() => {
-        setShowNotification("Payment submitted! Verification in progress.");
+        setShowNotification("Payment proof submitted! Verification usually takes 1-2 hours.");
         setActiveTab('dashboard');
+        setTimeout(() => setShowNotification(null), 6000);
       }} />;
       case 'mock':
         return (
@@ -121,16 +122,11 @@ const App: React.FC = () => {
                   </div>
                   <div className="mt-10 flex items-center justify-between border-t border-slate-50 dark:border-slate-700 pt-6">
                     <span className="text-2xl font-black text-[#f8981d]">₦{exam.fee.toLocaleString()}</span>
-                    <button 
-                      onClick={() => user.isPremium ? alert('Starting Exam...') : setActiveTab('premium')} 
-                      className="bg-[#1e3a5f] dark:bg-indigo-600 text-white px-8 py-3 rounded-2xl font-black text-xs tracking-widest active:scale-95 transition-all"
-                    >
-                      {user.isPremium ? 'START NOW' : 'UNLOCK'}
-                    </button>
+                    <button onClick={() => setActiveTab('premium')} className="bg-[#1e3a5f] dark:bg-indigo-600 text-white px-8 py-3 rounded-2xl font-black text-xs tracking-widest active:scale-95 transition-all">UNLOCK & START</button>
                   </div>
                 </div>
               ))}
-              {exams.length === 0 && <div className="col-span-full py-20 text-center text-slate-400 italic font-medium">No exams scheduled.</div>}
+              {exams.length === 0 && <div className="col-span-full py-20 text-center text-slate-400 italic font-medium">No mock exams currently scheduled by Admin.</div>}
             </div>
           </div>
         );
@@ -147,24 +143,38 @@ const App: React.FC = () => {
                        <div className="text-4xl group-hover:scale-110 transition-transform">{sub.icon}</div>
                        <div>
                          <p className="font-black text-slate-800 dark:text-white text-lg tracking-tight">{sub.name}</p>
-                         <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">{subNotes.length} Topics</p>
+                         <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">{subNotes.length} Topics Available</p>
                        </div>
                     </div>
+                    
                     <div className="flex-1 space-y-3">
                        {subNotes.length > 0 ? subNotes.map(note => (
-                         <div key={note.id} className="p-3 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-transparent hover:border-blue-100 cursor-pointer">
+                         <div key={note.id} className="p-3 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-transparent hover:border-blue-100 dark:hover:border-indigo-800 cursor-pointer transition-all">
                             <p className="font-bold text-xs text-slate-700 dark:text-slate-300">{note.topic}</p>
+                            <p className="text-[9px] text-indigo-500 dark:text-indigo-400 font-black uppercase tracking-widest mt-1">Ready to Study</p>
                          </div>
                        )) : (
-                         <p className="text-[10px] text-slate-300 italic text-center py-4">No content yet.</p>
+                         <div className="py-4 text-center">
+                            <p className="text-[10px] text-slate-300 font-bold italic">No manual notes for this class yet.</p>
+                         </div>
                        )}
                     </div>
-                    <button onClick={() => setActiveTab('chat')} className="mt-6 w-full py-3 bg-[#f8981d]/10 text-[#f8981d] rounded-2xl font-black text-[10px] uppercase tracking-widest">
-                      AI Study Help
+                    
+                    <button 
+                      onClick={() => setActiveTab('chat')}
+                      className="mt-6 w-full py-3 bg-[#f8981d]/10 text-[#f8981d] rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-[#f8981d] hover:text-white transition-all"
+                    >
+                      Instant AI Notes
                     </button>
                   </div>
                 );
               })}
+              {registeredSubjects.length === 0 && (
+                <div className="col-span-full py-20 bg-white dark:bg-slate-800 rounded-[2rem] border-2 border-dashed border-slate-100 dark:border-slate-700 text-center text-slate-400">
+                  <p className="font-bold">Register for courses in Profile to access simplified notes.</p>
+                  <button onClick={() => setActiveTab('profile')} className="mt-4 bg-[#1e3a5f] dark:bg-indigo-600 text-white px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest">Go to Profile</button>
+                </div>
+              )}
             </div>
           </div>
         );
@@ -175,10 +185,9 @@ const App: React.FC = () => {
   return (
     <Layout activeTab={activeTab} setActiveTab={setActiveTab} role={user.role} onLogout={handleLogout}>
       {showNotification && (
-        <div className="fixed top-8 right-4 left-4 md:left-auto md:right-8 bg-emerald-500 text-white px-6 py-4 rounded-[1.5rem] shadow-2xl z-50 flex items-center space-x-3 animate-in slide-in-from-top-10">
-          <span className="text-2xl">✅</span>
+        <div className="fixed top-8 right-4 left-4 md:left-auto md:right-8 bg-emerald-500 text-white px-6 py-4 rounded-[1.5rem] shadow-2xl z-50 flex items-center space-x-3 border-b-4 border-emerald-600 animate-in slide-in-from-top-10">
+          <span className="text-2xl animate-bounce">✅</span>
           <p className="font-black uppercase tracking-widest text-xs">{showNotification}</p>
-          <button onClick={() => setShowNotification(null)} className="ml-4 opacity-70">✕</button>
         </div>
       )}
       {renderContent()}
