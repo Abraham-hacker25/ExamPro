@@ -1,4 +1,3 @@
-
 export type ExamType = 'WAEC' | 'JAMB' | 'NECO';
 export type StudentClass = 'SS1' | 'SS2' | 'SS3';
 export type UserRole = 'STUDENT' | 'ADMIN';
@@ -75,4 +74,7 @@ export interface User {
   registeredSubjects: string[]; 
   avatarUrl?: string;
   theme?: ThemeMode;
+  referralCode?: string;
+  referredBy?: string;
+  referralCount?: number;
 }

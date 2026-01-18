@@ -1,18 +1,12 @@
-
+import * as ParseModule from 'parse';
 import { Subject, MockExam, User, PaymentProof, PaymentSettings, StudyNote, Question } from '../types';
 
 /**
- * BACK4APP REAL-TIME CLOUD CONFIGURATION
+ * BACK4APP CLOUD SERVICE
+ * Using official Parse JS SDK for real-time data flow
  */
-const PARSE_ID = '1718ba2cb62b5f786d8b658a4aa83530c859c408';
-const PARSE_REST_KEY = '1718ba2cb62b5f786d8b658a4aa83530c859c408';
-const BASE_URL = 'https://parseapi.back4app.com/classes';
 
-const headers = {
-  'X-Parse-Application-Id': PARSE_ID,
-  'X-Parse-REST-API-Key': PARSE_REST_KEY,
-  'Content-Type': 'application/json'
-};
+const Parse: any = (ParseModule as any).default || ParseModule;
 
 const defaultSubjects: Subject[] = [
   { id: 'maths', name: 'Mathematics', icon: '📐', color: 'bg-blue-100 text-blue-600' },
@@ -20,6 +14,9 @@ const defaultSubjects: Subject[] = [
   { id: 'physics', name: 'Physics', icon: '⚛️', color: 'bg-orange-100 text-orange-600' },
   { id: 'chemistry', name: 'Chemistry', icon: '🧪', color: 'bg-green-100 text-green-600' },
   { id: 'biology', name: 'Biology', icon: '🧬', color: 'bg-red-100 text-red-600' },
+  { id: 'economics', name: 'Economics', icon: '💹', color: 'bg-indigo-100 text-indigo-600' },
+  { id: 'govt', name: 'Government', icon: '🏛️', color: 'bg-yellow-100 text-yellow-600' },
+  { id: 'lit', name: 'Literature', icon: '🎭', color: 'bg-pink-100 text-pink-600' },
 ];
 
 const defaultSettings: PaymentSettings = {
@@ -28,106 +25,212 @@ const defaultSettings: PaymentSettings = {
   accountName: 'Abraham Blessing Michael',
 };
 
-const mapFromParse = (item: any) => ({
-  ...item,
-  id: item.objectId
+// Helper to map Parse Object to our Interface
+const mapUser = (obj: any): User => ({
+  id: obj.id,
+  email: obj.get('email'),
+  name: obj.get('name'),
+  password: obj.get('password'),
+  class: obj.get('class'),
+  targetExam: obj.get('targetExam'),
+  role: obj.get('role'),
+  isPremium: obj.get('isPremium'),
+  progress: obj.get('progress') || {},
+  registeredSubjects: obj.get('registeredSubjects') || [],
+  avatarUrl: obj.get('avatarUrl'),
+  theme: obj.get('theme'),
+  referralCode: obj.get('referralCode'),
+  referredBy: obj.get('referredBy'),
+  referralCount: obj.get('referralCount') || 0,
+});
+
+const mapPayment = (obj: any): PaymentProof => ({
+  id: obj.id,
+  userId: obj.get('userId'),
+  userName: obj.get('userName'),
+  userEmail: obj.get('userEmail'),
+  amount: obj.get('amount'),
+  type: obj.get('type'),
+  status: obj.get('status'),
+  timestamp: obj.createdAt?.toISOString() || new Date().toISOString(),
+  planId: obj.get('planId'),
 });
 
 export const cloudService = {
   // SETTINGS
   getSettings: async (): Promise<PaymentSettings> => {
     try {
-      const res = await fetch(`${BASE_URL}/Settings`, { headers });
-      const data = await res.json();
-      return data.results && data.results.length > 0 ? mapFromParse(data.results[0]) : defaultSettings;
+      const query = new Parse.Query('Settings');
+      const result = await query.first();
+      if (result) {
+        return {
+          bank: result.get('bank'),
+          accountNumber: result.get('accountNumber'),
+          accountName: result.get('accountName'),
+        };
+      }
+      return defaultSettings;
     } catch (e) {
       return defaultSettings;
     }
   },
+
   updateSettings: async (settings: PaymentSettings) => {
-    const res = await fetch(`${BASE_URL}/Settings`, { headers });
-    const data = await res.json();
-    const existing = data.results && data.results[0];
-    const method = existing ? 'PUT' : 'POST';
-    const url = existing ? `${BASE_URL}/Settings/${existing.objectId}` : `${BASE_URL}/Settings`;
-    await fetch(url, { method, headers, body: JSON.stringify(settings) });
-  },
-
-  // SUBJECTS
-  getSubjects: async (): Promise<Subject[]> => {
-    try {
-      const res = await fetch(`${BASE_URL}/Subjects`, { headers });
-      const data = await res.json();
-      return data.results && data.results.length > 0 ? data.results.map(mapFromParse) : defaultSubjects;
-    } catch (e) { return defaultSubjects; }
-  },
-
-  // QUESTIONS
-  getQuestions: async (subjectId?: string): Promise<Question[]> => {
-    let url = `${BASE_URL}/Questions`;
-    if (subjectId) url += `?where=${encodeURIComponent(JSON.stringify({ subjectId }))}`;
-    const res = await fetch(url, { headers });
-    const data = await res.json();
-    return (data.results || []).map(mapFromParse);
-  },
-  saveQuestion: async (q: Question) => {
-    const isUpdate = !!q.id && q.id.length > 15;
-    const url = isUpdate ? `${BASE_URL}/Questions/${q.id}` : `${BASE_URL}/Questions`;
-    await fetch(url, { method: isUpdate ? 'PUT' : 'POST', headers, body: JSON.stringify(q) });
-  },
-
-  // EXAMS
-  getExams: async (): Promise<MockExam[]> => {
-    const res = await fetch(`${BASE_URL}/Exams`, { headers });
-    const data = await res.json();
-    return (data.results || []).map(mapFromParse);
-  },
-
-  // PAYMENTS
-  getPayments: async (): Promise<PaymentProof[]> => {
-    const res = await fetch(`${BASE_URL}/Payments`, { headers });
-    const data = await res.json();
-    return (data.results || []).map(mapFromParse);
-  },
-  submitPayment: async (payment: PaymentProof) => {
-    await fetch(`${BASE_URL}/Payments`, { method: 'POST', headers, body: JSON.stringify(payment) });
-  },
-  updatePaymentStatus: async (paymentId: string, status: 'APPROVED' | 'REJECTED') => {
-    await fetch(`${BASE_URL}/Payments/${paymentId}`, { method: 'PUT', headers, body: JSON.stringify({ status }) });
-    if (status === 'APPROVED') {
-      const pRes = await fetch(`${BASE_URL}/Payments/${paymentId}`, { headers });
-      const payment = await pRes.json();
-      const uRes = await fetch(`${BASE_URL}/Users?where=${encodeURIComponent(JSON.stringify({ email: payment.userEmail }))}`, { headers });
-      const uData = await uRes.json();
-      if (uData.results && uData.results[0]) {
-        await fetch(`${BASE_URL}/Users/${uData.results[0].objectId}`, { method: 'PUT', headers, body: JSON.stringify({ isPremium: true }) });
-      }
+    const query = new Parse.Query('Settings');
+    let config = await query.first();
+    if (!config) {
+      const SettingsClass = Parse.Object.extend('Settings');
+      config = new SettingsClass();
     }
+    config.set('bank', settings.bank);
+    config.set('accountNumber', settings.accountNumber);
+    config.set('accountName', settings.accountName);
+    await config.save();
   },
 
   // USERS
   getUsers: async (): Promise<User[]> => {
-    const res = await fetch(`${BASE_URL}/Users`, { headers });
-    const data = await res.json();
-    return (data.results || []).map(mapFromParse);
+    try {
+      const query = new Parse.Query('Users');
+      query.limit(1000);
+      const results = await query.find();
+      return results.map(mapUser);
+    } catch (e) {
+      console.error("Cloud Error: Fetching users failed", e);
+      return [];
+    }
   },
-  saveUser: async (user: User) => {
-    const emailQuery = encodeURIComponent(JSON.stringify({ email: user.email }));
-    const checkRes = await fetch(`${BASE_URL}/Users?where=${emailQuery}`, { headers });
-    const checkData = await checkRes.json();
-    const existing = checkData.results && checkData.results[0];
-    const url = existing ? `${BASE_URL}/Users/${existing.objectId}` : `${BASE_URL}/Users`;
-    await fetch(url, { method: existing ? 'PUT' : 'POST', headers, body: JSON.stringify(user) });
-  },
+
   getUser: async (email: string): Promise<User | undefined> => {
-    const query = encodeURIComponent(JSON.stringify({ email }));
-    const res = await fetch(`${BASE_URL}/Users?where=${query}`, { headers });
-    const data = await res.json();
-    return data.results && data.results[0] ? mapFromParse(data.results[0]) : undefined;
+    try {
+      const query = new Parse.Query('Users');
+      query.equalTo('email', email);
+      const result = await query.first();
+      return result ? mapUser(result) : undefined;
+    } catch (e) {
+      return undefined;
+    }
   },
+
+  saveUser: async (user: User) => {
+    try {
+      const query = new Parse.Query('Users');
+      query.equalTo('email', user.email);
+      let parseUser = await query.first();
+      
+      const isNew = !parseUser;
+      if (isNew) {
+        const UserClass = Parse.Object.extend('Users');
+        parseUser = new UserClass();
+        // Generate referral code for new students
+        if (!user.referralCode) {
+          user.referralCode = user.name.substring(0, 3).toUpperCase() + Math.floor(1000 + Math.random() * 9000);
+        }
+      }
+
+      Object.entries(user).forEach(([key, value]) => {
+        if (key !== 'id') parseUser!.set(key, value);
+      });
+
+      await parseUser.save();
+
+      // Handle referral counting on NEW user creation
+      if (isNew && user.referredBy) {
+        const refQuery = new Parse.Query('Users');
+        refQuery.equalTo('referralCode', user.referredBy);
+        const referrer = await refQuery.first();
+        if (referrer) {
+          referrer.increment('referralCount');
+          await referrer.save();
+        }
+      }
+    } catch (e) {
+      console.error("Cloud Error: Save User Failed", e);
+      throw e;
+    }
+  },
+
+  // PAYMENTS
+  getPayments: async (): Promise<PaymentProof[]> => {
+    try {
+      const query = new Parse.Query('Payments');
+      query.descending('createdAt');
+      query.limit(200);
+      const results = await query.find();
+      return results.map(mapPayment);
+    } catch (e) {
+      return [];
+    }
+  },
+
+  submitPayment: async (payment: PaymentProof) => {
+    try {
+      const PaymentClass = Parse.Object.extend('Payments');
+      const p = new PaymentClass();
+      Object.entries(payment).forEach(([key, value]) => {
+        if (key !== 'id') p.set(key, value);
+      });
+      await p.save();
+    } catch (e) {
+      console.error("Cloud Error: Payment submission failed", e);
+      throw e;
+    }
+  },
+
+  updatePaymentStatus: async (paymentId: string, status: 'APPROVED' | 'REJECTED') => {
+    try {
+      const query = new Parse.Query('Payments');
+      const payment = await query.get(paymentId);
+      payment.set('status', status);
+      await payment.save();
+
+      if (status === 'APPROVED') {
+        const userEmail = payment.get('userEmail');
+        const userQuery = new Parse.Query('Users');
+        userQuery.equalTo('email', userEmail);
+        const userObj = await userQuery.first();
+        if (userObj) {
+          userObj.set('isPremium', true);
+          await userObj.save();
+        }
+      }
+    } catch (e) {
+      console.error("Cloud Error: Update payment failed", e);
+      throw e;
+    }
+  },
+
+  // SUBJECTS & CONTENT
+  getSubjects: async (): Promise<Subject[]> => {
+    try {
+      const query = new Parse.Query('Subjects');
+      const results = await query.find();
+      if (results.length > 0) {
+        return results.map(r => ({ ...r.attributes, id: r.id } as Subject));
+      }
+      return defaultSubjects;
+    } catch (e) {
+      return defaultSubjects;
+    }
+  },
+
+  getExams: async (): Promise<MockExam[]> => {
+    try {
+      const query = new Parse.Query('Exams');
+      const results = await query.find();
+      return results.map(r => ({ ...r.attributes, id: r.id } as MockExam));
+    } catch (e) {
+      return [];
+    }
+  },
+
   getNotes: async (): Promise<StudyNote[]> => {
-    const res = await fetch(`${BASE_URL}/Notes`, { headers });
-    const data = await res.json();
-    return (data.results || []).map(mapFromParse);
+    try {
+      const query = new Parse.Query('Notes');
+      const results = await query.find();
+      return results.map(r => ({ ...r.attributes, id: r.id } as StudyNote));
+    } catch (e) {
+      return [];
+    }
   }
 };
